@@ -35,19 +35,25 @@ def save_data(user, amount, goal):
     try:
         from streamlit_gsheets import GSheetsConnection
         conn = st.connection("gsheets", type=GSheetsConnection)
+        
+        # Pull fresh data to append to
         current_df = load_data()
+        
         new_row = pd.DataFrame([{
             "Date": datetime.now().strftime('%Y-%m-%d'),
             "User": user,
             "Intake": amount,
             "Goal": goal
         }])
+        
         updated_df = pd.concat([current_df, new_row], ignore_index=True)
-        # We write back to the 'logs' worksheet
+        
+        # Write back
         conn.update(worksheet="logs", data=updated_df)
+        st.success("Log Synced to Google Sheets!") # This will confirm it worked
         return True
     except Exception as e:
-        st.error(f"Save Failed: {e}")
+        st.error(f"Error saving to Sheet: {e}")
         return False
 
 # --- APP UI ---
