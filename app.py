@@ -15,7 +15,23 @@ st.markdown("""
 
 # --- GOOGLE SHEETS CONNECTION ---
 # This connects to the URL you will provide in the Streamlit Dashboard later
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- GOOGLE SHEETS CONNECTION ---
+# Replace your existing conn and df section with this:
+sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+
+# This part converts a standard Google Sheet URL into a direct CSV export link
+# which is much less likely to throw an HTTPError
+csv_url = sheet_url.replace('/edit#gid=', '/export?format=csv&gid=')
+if '/edit?' in csv_url:
+    csv_url = csv_url.replace('/edit?', '/export?format=csv&')
+elif '/edit' in csv_url and '/export' not in csv_url:
+    csv_url = csv_url.replace('/edit', '/export?format=csv')
+
+try:
+    df = pd.read_csv(csv_url)
+except Exception as e:
+    st.error("Connection Error. Please ensure your Google Sheet is set to 'Anyone with the link can EDIT'")
+    st.stop()
 
 # --- APP LOGIC ---
 st.title("💧 H2O PRO | Team Hydration")
