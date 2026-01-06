@@ -1,37 +1,37 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import requests
 
 # --- CONFIG & THEME ---
 st.set_page_config(page_title="H2O Pro Tracker", layout="centered")
 
+# Sporty Dark Mode Styling
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: #ffffff; }
-    .stButton>button { width: 100%; border-radius: 20px; background-color: #007bff; color: white; font-weight: bold; }
+    .stButton>button { width: 100%; border-radius: 20px; background-color: #007bff; color: white; font-weight: 200; height: 3em; border: none; }
     .stButton>button:hover { background-color: #00d4ff; color: #0e1117; }
+    [data-testid="stMetricValue"] { color: #00d4ff !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- GOOGLE SHEETS SETTINGS ---
-# Pulling the URL from your Secrets
-SHEET_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
-# Format the URL for direct CSV download (Reading)
-CSV_URL = SHEET_URL.replace('/edit#gid=', '/export?format=csv&gid=')
+# --- DATA LOADING ---
+# This uses the 'Publish to Web' CSV link for maximum reliability
+SHEET_CSV_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
 
-# --- DATA FUNCTIONS ---
 def load_data():
     try:
-        # We add a cache-busting parameter to ensure we always get the latest data
-        return pd.read_csv(f"{CSV_URL}&cachebuster={datetime.now().timestamp()}")
-    except Exception as e:
-        st.error("Could not connect to Google Sheet. Check permissions.")
+        # Adding a timestamp prevents the browser from showing "old" data
+        url = f"{SHEET_CSV_URL}&t={datetime.now().timestamp()}"
+        df = pd.read_csv(url)
+        # Clean up any empty rows or dummy data automatically
+        df = df.dropna(subset=['User'])
+        return df
+    except:
+        # If the sheet is totally empty, return a clean structure
         return pd.DataFrame(columns=["Date", "User", "Intake", "Goal"])
 
 def save_data(user, amount, goal):
-    # This uses a simple "Form Submission" trick to save data back to the sheet
-    # For now, let's keep it simple: we will use the GSheets connection only for writing
     try:
         from streamlit_gsheets import GSheetsConnection
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -43,59 +43,67 @@ def save_data(user, amount, goal):
             "Goal": goal
         }])
         updated_df = pd.concat([current_df, new_row], ignore_index=True)
+        # We write back to the 'logs' worksheet
         conn.update(worksheet="logs", data=updated_df)
         return True
-    except:
+    except Exception as e:
+        st.error(f"Save Failed: {e}")
         return False
 
 # --- APP UI ---
-st.title("💧 H2O PRO | Team Hydration")
+st.title("💧 H2O PRO | Hydration Tracker")
 
-users = ["Coach Alex", "Coach Jordan", "Coach Sam", "Coach Taylor"]
-selected_user = st.selectbox("Who is tracking?", users)
+# PRE-ADDED NAMES: Change these to your actual team names
+team_members = ["Weylu", "Amar", "Becca", "Giovanna", "Lindsey"]
+selected_user = st.selectbox("Select Athlete/Coach", team_members)
 
-weight_kg = st.number_input("Weight (kg)", min_value=40, value=80)
+weight_kg = st.number_input("Weight (kg)", min_value=30, value=80, step=1)
 daily_goal_oz = round((weight_kg / 20) * 33.814)
 
-# Load existing data
+# Current Progress Calculation
 df = load_data()
 today = datetime.now().strftime('%Y-%m-%d')
 
-# Calculate current progress
-if not df.empty and 'User' in df.columns:
+# Filtering out dummy/old data: only show today's logs for the selected user
+current_total = 0
+if not df.empty:
     user_today = df[(df['User'] == selected_user) & (df['Date'] == today)]
     current_total = user_today['Intake'].sum()
-else:
-    current_total = 0
 
-# --- PROGRESS VISUAL ---
-st.markdown(f"### Goal: {daily_goal_oz} oz | Current: {int(current_total)} oz")
+# --- DASHBOARD ---
+st.markdown(f"### Target: {daily_goal_oz} oz")
 progress = min(current_total / daily_goal_oz, 1.0)
 st.progress(progress)
+st.metric("Current Intake", f"{int(current_total)} oz", f"{int(daily_goal_oz - current_total)} oz left")
 
-# --- ADD WATER BUTTONS ---
+# --- INPUTS ---
 col1, col2, col3 = st.columns(3)
-
-def handle_click(amt):
-    with st.spinner("Saving..."):
-        if save_data(selected_user, amt, daily_goal_oz):
-            st.toast(f"Logged {amt}oz!")
-            st.rerun()
-
 with col1:
-    if st.button("+8 oz"): handle_click(8)
+    if st.button("+8oz"): 
+        save_data(selected_user, 8, daily_goal_oz)
+        st.rerun()
 with col2:
-    if st.button("+16 oz"): handle_click(16)
+    if st.button("+16oz"): 
+        save_data(selected_user, 16, daily_goal_oz)
+        st.rerun()
 with col3:
-    if st.button("+32 oz"): handle_click(32)
+    if st.button("+32oz"): 
+        save_data(selected_user, 32, daily_goal_oz)
+        st.rerun()
+
+custom_amt = st.number_input("Add Custom Amount", min_value=0, step=1)
+if st.button("Log Custom Amount"):
+    save_data(selected_user, custom_amt, daily_goal_oz)
+    st.rerun()
 
 # --- LEADERBOARD ---
 st.divider()
-st.subheader("🏆 Hydration League (Today)")
-if not df.empty and 'Date' in df.columns:
-    league_df = df[df['Date'] == today].groupby('User').agg({'Intake': 'sum', 'Goal': 'max'})
-    if not league_df.empty:
-        league_df['% Done'] = (league_df['Intake'] / league_df['Goal'] * 100).astype(int).astype(str) + "%"
-        st.table(league_df[['% Done']].sort_values(by='% Done', ascending=False))
+st.subheader("🏆 Team Leaderboard (Today)")
+if not df.empty:
+    league = df[df['Date'] == today].groupby('User').agg({'Intake': 'sum', 'Goal': 'max'})
+    if not league.empty:
+        league['% of Goal'] = (league['Intake'] / league['Goal'] * 100).astype(int)
+        # Sorting by hydration percentage
+        st.dataframe(league[['% of Goal']].sort_values(by='% of Goal', ascending=False), use_container_width=True)
     else:
-        st.info("No one has logged water today yet. Be the first!")
+        st.write("No entries yet for today.")
