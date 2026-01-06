@@ -1,72 +1,75 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
-# --- CONFIGURATION & THEME ---
+# --- CONFIG & THEME ---
 st.set_page_config(page_title="H2O Pro Tracker", layout="centered")
 
-# Custom CSS for Sporty Dark Mode
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: #ffffff; }
-    .stButton>button { width: 100%; border-radius: 20px; background-color: #007bff; color: white; font-weight: bold; border: none; }
-    .stButton>button:hover { background-color: #00d4ff; color: #0e1117; }
-    .metric-card { background-color: #1c212b; padding: 20px; border-radius: 15px; border: 1px solid #00d4ff; text-align: center; }
+    .stButton>button { width: 100%; border-radius: 20px; background-color: #007bff; color: white; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
+
+# --- GOOGLE SHEETS CONNECTION ---
+# This connects to the URL you will provide in the Streamlit Dashboard later
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- APP LOGIC ---
 st.title("💧 H2O PRO | Team Hydration")
 
-# 1. Simple User Selection
 users = ["Coach Alex", "Coach Jordan", "Coach Sam", "Coach Taylor"]
 selected_user = st.selectbox("Who is tracking?", users)
 
-# 2. Setup / Weight Info (Stored in Session for this demo)
-# In a production version, these would be pulled from your "forever" database
-weight_kg = st.number_input("Enter your weight (kg) to calculate goal", min_value=40, max_value=200, value=80)
+weight_kg = st.number_input("Weight (kg)", min_value=40, value=80)
 daily_goal_oz = round((weight_kg / 20) * 33.814)
 
-st.markdown(f"### Your Daily Goal: **{daily_goal_oz} oz**")
+# --- FETCH CURRENT DATA ---
+# Read the 'logs' tab from the Google Sheet
+df = conn.read(worksheet="logs")
+today = datetime.now().strftime('%Y-%m-%d')
 
-# --- TRACKING SECTION ---
-st.divider()
+# Calculate user's total for today
+if not df.empty:
+    user_today_df = df[(df['User'] == selected_user) & (df['Date'] == today)]
+    current_total = user_today_df['Intake'].sum()
+else:
+    current_total = 0
+
+# --- ADD WATER ---
+st.markdown(f"### Goal: {daily_goal_oz} oz | Current: {current_total} oz")
 col1, col2, col3 = st.columns(3)
 
-# Logic to handle water addition
-if 'count' not in st.session_state:
-    st.session_state.count = 0
+def add_water(amount):
+    new_data = pd.DataFrame([{
+        "Date": today,
+        "User": selected_user,
+        "Intake": amount,
+        "Goal": daily_goal_oz
+    }])
+    # Append the new row to the Google Sheet
+    updated_df = pd.concat([df, new_data], ignore_index=True)
+    conn.update(worksheet="logs", data=updated_df)
+    st.success(f"Added {amount}oz!")
+    st.rerun()
 
 with col1:
-    if st.button("+8 oz"):
-        st.session_state.count += 8
+    if st.button("+8 oz"): add_water(8)
 with col2:
-    if st.button("+16 oz"):
-        st.session_state.count += 16
+    if st.button("+16 oz"): add_water(16)
 with col3:
-    if st.button("+32 oz"):
-        st.session_state.count += 32
+    if st.button("+32 oz"): add_water(32)
 
-custom_add = st.number_input("Custom Amount (oz)", min_value=0, step=1)
-if st.button("Add Custom"):
-    st.session_state.count += custom_add
-
-# --- VISUAL PROGRESS ---
-progress = min(st.session_state.count / daily_goal_oz, 1.0)
+# --- PROGRESS & LEADERBOARD ---
+progress = min(current_total / daily_goal_oz, 1.0)
 st.progress(progress)
-st.subheader(f"Current Intake: {st.session_state.count} / {daily_goal_oz} oz")
 
-# --- LEADERBOARD (Gamification) ---
 st.divider()
 st.subheader("🏆 Hydration League")
-# Mock data for leaderboard
-leaderboard_data = {
-    "User": ["Coach Alex", "Coach Jordan", "Coach Sam", "Coach Taylor"],
-    "Goal Met %": ["85%", "40%", "92%", f"{int(progress*100)}%"]
-}
-df = pd.DataFrame(leaderboard_data)
-st.table(df.sort_values(by="Goal Met %", ascending=False))
-
-# --- REMINDERS ---
-if progress < 0.5 and datetime.now().hour > 12:
-    st.warning("⚠️ You're behind on your hydration goal for this afternoon!")
+if not df.empty:
+    # Logic to show % of goal met by user for today
+    leaderboard = df[df['Date'] == today].groupby('User').agg({'Intake': 'sum', 'Goal': 'max'})
+    leaderboard['% Done'] = (leaderboard['Intake'] / leaderboard['Goal'] * 100).astype(int).astype(str) + "%"
+    st.table(leaderboard[['% Done']].sort_values(by='% Done', ascending=False))
